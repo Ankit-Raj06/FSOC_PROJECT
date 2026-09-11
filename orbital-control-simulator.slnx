@@ -1,0 +1,4 @@
+﻿<Solution>
+  <Project Path="CoreRuntime.csproj" />
+  <Project Path="EditModeTesting.csproj" />
+</Solution>

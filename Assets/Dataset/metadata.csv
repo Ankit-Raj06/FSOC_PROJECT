@@ -1,0 +1,16 @@
+image_name,class_type,satellite_in_fov,laser_aligned,laser_error_degrees,distance,camera_fov
+positive_00000,positive_fov,True,True,0.00,1.21,48.77
+positive_00001,positive_fov,True,True,0.00,1.21,35.86
+positive_00002,positive_fov,True,True,0.00,1.21,41.83
+positive_00003,positive_fov,True,True,0.00,1.21,47.67
+positive_00004,positive_fov,True,True,0.00,1.20,50.44
+negative_fov_00000,negative_fov,True,False,0.00,1.21,55.95
+negative_fov_00001,negative_fov,True,False,0.00,1.21,53.22
+negative_fov_00002,negative_fov,True,False,0.00,1.21,63.24
+negative_fov_00003,negative_fov,True,False,0.00,1.21,62.62
+negative_fov_00004,negative_fov,True,False,0.00,1.21,55.11
+negative_laser_00000,negative_laser,True,False,19.50,1.21,44.05
+negative_laser_00001,negative_laser,True,False,35.29,1.21,41.35
+negative_laser_00002,negative_laser,True,False,25.93,1.21,50.87
+negative_laser_00003,negative_laser,True,False,20.95,1.21,43.63
+negative_laser_00004,negative_laser,True,False,30.66,1.21,44.05
