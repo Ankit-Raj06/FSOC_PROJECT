@@ -14,7 +14,8 @@ public class PATController : MonoBehaviour
     public Transform coarseGimbalX;
 
     [Header("Control")]
-    public float rotationSpeed = 5f;
+    [Tooltip("Maximum gimbal rotation speed in degrees/second.")]
+    public float rotationSpeed = 150f;
 
     [Header("Gimbal Limits")]
     public float horizontalLimit = 80f;
@@ -24,24 +25,19 @@ public class PATController : MonoBehaviour
     public float predictionDistance = 10f;
 
     [Header("Beam Output")]
-    [Tooltip("The LaserCylinderBeam this controller drives with its predicted pointing direction.")]
     public LaserCylinderBeam laserBeamController;
 
-    [Tooltip("If true, the beam's length uses the actual distance to targetSatellite (known/assumed range) " +
-             "instead of the fixed predictionDistance. Direction still comes entirely from PAT either way — " +
-             "this only affects where the beam visually ends.")]
     public bool useTargetDistanceForBeamLength = false;
 
     [Header("Search / Reacquisition")]
-    [Tooltip("If true, whenever targetSatellite is geometrically outside the camera's frame, the gimbal " +
-             "slews toward its true direction using a direct 3D angle (not viewport projection), until it " +
-             "re-enters view.\n\n" +
-             "IMPORTANT — this is a GROUND-TRUTH-based fallback for demo purposes only. It uses " +
-             "targetSatellite's real position directly, which a real system would not have access to. " +
-             "It is NOT the uncertainty-aware search strategy (widened FOV / motion-based prediction / " +
-             "recovery sweep) described in your project write-up — don't present this as that in your viva. " +
-             "It's useful for demonstrating that the gimbal recovers from target loss at all.")]
-    public bool autoReacquireWhenOutOfView = true;
+    public bool autoReacquireWhenOutOfView = false;
+
+    [Header("Axis Settings")]
+    public bool invertYaw = false;
+    public bool invertPitch = false;
+
+    [Header("Debug")]
+    public bool debugLogs = false;
 
     private Camera cam;
 
@@ -54,8 +50,7 @@ public class PATController : MonoBehaviour
             if (cam == null)
             {
                 Debug.LogWarning(
-                    "PATController: cameraTransform has no Camera component. " +
-                    "autoReacquireWhenOutOfView will be unavailable until this is fixed."
+                    "[PATController] Camera Transform has no Camera component."
                 );
             }
         }
@@ -63,216 +58,315 @@ public class PATController : MonoBehaviour
 
     private void Update()
     {
-        if (tracker == null)
+        if (tracker == null ||
+            !tracker.enabled ||
+            cameraTransform == null ||
+            coarseGimbalY == null ||
+            coarseGimbalX == null)
             return;
 
-        if (!tracker.enabled)
+        if (cam == null)
             return;
 
-        float horizontalAngle;
-        float verticalAngle;
+        // PAT only runs when Tracker says YOLO has a valid target.
+        if (!tracker.targetDetected)
+            return;
 
-        // ------------------------------------------------
-        // DECIDE WHICH ERROR SIGNAL TO USE THIS FRAME
-        //
-        // Normal case: Kalman-filtered viewport prediction from
-        // Tracker, converted via the linear viewportOffset -> angle
-        // approximation below. That approximation is only valid
-        // near the center of frame (which is where normal tracking
-        // operates), NOT at large angles.
-        //
-        // Reacquire case: computed directly as a 3D angle in
-        // cameraTransform's own local space via Atan2, which stays
-        // bounded and correct at ANY angular offset — including
-        // targets near/behind the camera, where a viewport-based
-        // error signal blows up toward infinity (tan(angle) as
-        // angle -> 90 degrees) and drives the gimbal the wrong way.
-        // This was the actual cause of the erratic reacquire
-        // behavior: WorldToViewportPoint's x/y are a tangent
-        // projection, not an angle — using them as an angle-scaled
-        // error is only ever a good approximation close to center.
-        // ------------------------------------------------
+        Vector2 predicted =
+            tracker.GetPredictedPosition();
 
-        bool useReacquire =
-            autoReacquireWhenOutOfView &&
-            cam != null &&
-            targetSatellite != null &&
-            !IsTargetInView();
+        predicted.x = Mathf.Clamp01(predicted.x);
+        predicted.y = Mathf.Clamp01(predicted.y);
 
-        if (useReacquire)
+        TrackUsingCameraRay(predicted);
+
+        UpdateLaserBeam();
+    }
+
+    // ============================================================
+    // PAT TRACKING
+    // ============================================================
+
+    private void TrackUsingCameraRay(Vector2 predicted)
+    {
+    	// --------------------------------------------------------
+    	// 1. Convert YOLO viewport position into a WORLD-SPACE ray.
+    	//
+    	// This ray represents exactly where the detected target
+    	// appears in the camera image.
+    	// --------------------------------------------------------
+
+    	Ray ray =
+        	cam.ViewportPointToRay(
+            		new Vector3(
+                	predicted.x,
+                	predicted.y,
+                	0f
+            	)
+        );
+
+    Vector3 targetDirection =
+        ray.direction.normalized;
+
+    // --------------------------------------------------------
+    // 2. CURRENT OPTICAL AXIS
+    //
+    // Use the actual camera forward direction.
+    // Do NOT assume the camera's +Z is aligned with the
+    // gimbal's +Z.
+    // --------------------------------------------------------
+
+    Vector3 cameraForward =
+        cameraTransform.forward.normalized;
+
+    // --------------------------------------------------------
+    // 3. YAW AXIS
+    //
+    // CoarseGimbal_Y rotates around its local Y axis.
+    // In world space that axis is yawGimbal.up.
+    // --------------------------------------------------------
+
+    Vector3 yawAxis =
+        coarseGimbalY.up.normalized;
+
+    // Project both directions onto the plane perpendicular
+    // to the yaw axis.
+    Vector3 currentYawDirection =
+        Vector3.ProjectOnPlane(
+            cameraForward,
+            yawAxis
+        ).normalized;
+
+    Vector3 targetYawDirection =
+        Vector3.ProjectOnPlane(
+            targetDirection,
+            yawAxis
+        ).normalized;
+
+    float yawError = 0f;
+
+    if (currentYawDirection.sqrMagnitude > 0.000001f &&
+        targetYawDirection.sqrMagnitude > 0.000001f)
+    {
+        yawError =
+            Vector3.SignedAngle(
+                currentYawDirection,
+                targetYawDirection,
+                yawAxis
+            );
+    }
+
+    // --------------------------------------------------------
+    // 4. PITCH AXIS
+    //
+    // CoarseGimbal_X rotates around its local X axis.
+    // In world space that axis is coarseGimbalX.right.
+    // --------------------------------------------------------
+
+    Vector3 pitchAxis =
+        coarseGimbalX.right.normalized;
+
+    // After accounting for yaw, use the current camera
+    // direction and target direction to determine pitch.
+    //
+    // Project onto the plane perpendicular to the pitch axis.
+    Vector3 currentPitchDirection =
+        Vector3.ProjectOnPlane(
+            cameraForward,
+            pitchAxis
+        ).normalized;
+
+    Vector3 targetPitchDirection =
+        Vector3.ProjectOnPlane(
+            targetDirection,
+            pitchAxis
+        ).normalized;
+
+    float pitchError = 0f;
+
+    if (currentPitchDirection.sqrMagnitude > 0.000001f &&
+        targetPitchDirection.sqrMagnitude > 0.000001f)
+    {
+        pitchError =
+            Vector3.SignedAngle(
+                currentPitchDirection,
+                targetPitchDirection,
+                pitchAxis
+            );
+    }
+
+    // --------------------------------------------------------
+    // 5. AXIS INVERSION
+    // --------------------------------------------------------
+
+    if (invertYaw)
+        yawError = -yawError;
+
+    if (invertPitch)
+        pitchError = -pitchError;
+
+    // --------------------------------------------------------
+    // 6. APPLY
+    // --------------------------------------------------------
+
+    ApplyYawError(yawError);
+    ApplyPitchError(pitchError);
+
+    // --------------------------------------------------------
+    // DEBUG
+    // --------------------------------------------------------
+
+    if (debugLogs)
+    {
+        Debug.Log(
+            $"PAT | " +
+            $"Predicted={predicted} " +
+            $"TargetDir={targetDirection} " +
+            $"CameraForward={cameraForward} " +
+            $"YawError={yawError:F2} " +
+            $"PitchError={pitchError:F2}"
+        );
+    }
+}
+
+    // ============================================================
+    // YAW
+    // ============================================================
+
+    private void ApplyYawError(float yawError)
+    {
+        float currentYaw =
+            NormalizeAngle(
+                coarseGimbalY.localEulerAngles.y
+            );
+
+        float targetYaw =
+            currentYaw + yawError;
+
+        targetYaw =
+            Mathf.Clamp(
+                targetYaw,
+                -horizontalLimit,
+                horizontalLimit
+            );
+
+        float newYaw =
+            Mathf.MoveTowardsAngle(
+                currentYaw,
+                targetYaw,
+                rotationSpeed * Time.deltaTime
+            );
+
+        newYaw =
+            Mathf.Clamp(
+                newYaw,
+                -horizontalLimit,
+                horizontalLimit
+            );
+
+        coarseGimbalY.localRotation =
+            Quaternion.Euler(
+                0f,
+                newYaw,
+                0f
+            );
+    }
+
+    // ============================================================
+    // PITCH
+    // ============================================================
+
+    private void ApplyPitchError(float pitchError)
+    {
+        float currentPitch =
+            NormalizeAngle(
+                coarseGimbalX.localEulerAngles.x
+            );
+
+        float targetPitch =
+            currentPitch + pitchError;
+
+        targetPitch =
+            Mathf.Clamp(
+                targetPitch,
+                -verticalLimit,
+                verticalLimit
+            );
+
+        float newPitch =
+            Mathf.MoveTowardsAngle(
+                currentPitch,
+                targetPitch,
+                rotationSpeed * Time.deltaTime
+            );
+
+        newPitch =
+            Mathf.Clamp(
+                newPitch,
+                -verticalLimit,
+                verticalLimit
+            );
+
+        coarseGimbalX.localRotation =
+            Quaternion.Euler(
+                newPitch,
+                0f,
+                0f
+            );
+    }
+
+    // ============================================================
+    // LASER
+    // ============================================================
+
+    private void UpdateLaserBeam()
+    {
+        if (laserBeamController == null ||
+            laserOrigin == null ||
+            cameraTransform == null)
+            return;
+
+        float beamLength =
+            predictionDistance;
+
+        if (useTargetDistanceForBeamLength &&
+            targetSatellite != null)
         {
             Vector3 toTarget =
-                targetSatellite.position - cameraTransform.position;
+                targetSatellite.position -
+                laserOrigin.position;
 
-            if (toTarget.sqrMagnitude < 0.0001f)
-            {
-                // Degenerate — target essentially at camera position.
-                // Fall back to the tracker rather than dividing by
-                // near-zero.
-                Vector2 fallback = tracker.GetPredictedPosition();
-                horizontalAngle = (fallback.x - 0.5f) * horizontalLimit;
-                verticalAngle = (fallback.y - 0.5f) * verticalLimit;
-            }
-            else
-            {
-                // Direction to target, expressed in cameraTransform's
-                // OWN local space (local +Z = forward, local +X =
-                // right, local +Y = up). Because this uses the
-                // camera's live world orientation, it automatically
-                // accounts for whatever fixed offset exists between
-                // the gimbal axes and the camera's actual forward —
-                // no need to know that offset explicitly.
-                Vector3 localToTarget =
-                    cameraTransform.InverseTransformDirection(toTarget.normalized);
-
-                // Yaw: angle in the horizontal (X/Z) plane.
-                horizontalAngle =
-                    Mathf.Atan2(localToTarget.x, localToTarget.z) * Mathf.Rad2Deg;
-
-                // Pitch: angle in the vertical (Y/Z) plane. Negated
-                // to match the existing sign convention below, where
-                // verticalAngle is subtracted to move X.
-                verticalAngle =
-                    Mathf.Atan2(-localToTarget.y, localToTarget.z) * Mathf.Rad2Deg;
-            }
-        }
-        else
-        {
-            // Trust the Kalman-filtered tracker, using the existing
-            // linear viewport-offset approximation (valid because
-            // normal tracking keeps the target near center of frame).
-            Vector2 predicted = tracker.GetPredictedPosition();
-
-            float horizontalError = predicted.x - 0.5f;
-            float verticalError = predicted.y - 0.5f;
-
-            horizontalAngle = horizontalError * horizontalLimit;
-            verticalAngle = verticalError * verticalLimit;
-        }
-
-        // ------------------------------------------------
-        // HORIZONTAL GIMBAL
-        //
-        // Target angle is CURRENT angle + increment, not just the
-        // increment on its own — this is what makes the control
-        // law converge to true zero error instead of a steady-state
-        // offset. Unaffected by which branch above produced the
-        // increment — reacquire's larger increments simply clamp to
-        // the gimbal limit and slew there at the normal rate.
-        // ------------------------------------------------
-
-        if (coarseGimbalY != null)
-        {
-            Vector3 currentRotation =
-                coarseGimbalY.localEulerAngles;
-
-            float currentY =
-                NormalizeAngle(currentRotation.y);
-
-            float targetY =
-                Mathf.Clamp(
-                    currentY + horizontalAngle,
-                    -horizontalLimit,
-                    horizontalLimit
+            float projectedDistance =
+                Vector3.Dot(
+                    toTarget,
+                    cameraTransform.forward
                 );
 
-            float newY =
-                Mathf.MoveTowards(
-                    currentY,
-                    targetY,
-                    rotationSpeed * 100f * Time.deltaTime
-                );
-
-            coarseGimbalY.localRotation =
-                Quaternion.Euler(
-                    0f,
-                    newY,
-                    0f
+            beamLength =
+                Mathf.Max(
+                    0.01f,
+                    projectedDistance
                 );
         }
 
-        // ------------------------------------------------
-        // VERTICAL GIMBAL
-        // ------------------------------------------------
+        Vector3 beamEnd =
+            laserOrigin.position +
+            cameraTransform.forward *
+            beamLength;
 
-        if (coarseGimbalX != null)
-        {
-            Vector3 currentRotation =
-                coarseGimbalX.localEulerAngles;
-
-            float currentX =
-                NormalizeAngle(currentRotation.x);
-
-            float targetX =
-                Mathf.Clamp(
-                    currentX + (-verticalAngle),
-                    -verticalLimit,
-                    verticalLimit
-                );
-
-            float newX =
-                Mathf.MoveTowards(
-                    currentX,
-                    targetX,
-                    rotationSpeed * 100f * Time.deltaTime
-                );
-
-            coarseGimbalX.localRotation =
-                Quaternion.Euler(
-                    newX,
-                    0f,
-                    0f
-                );
-        }
-
-        // ------------------------------------------------
-        // DRIVE THE LASER BEAM WITH THE PAT-COMMANDED DIRECTION
-        // ------------------------------------------------
-
-        if (laserBeamController != null && laserOrigin != null && cameraTransform != null)
-        {
-            float beamLength = predictionDistance;
-
-            if (useTargetDistanceForBeamLength && targetSatellite != null)
-            {
-                Vector3 toTarget =
-                    targetSatellite.position - laserOrigin.position;
-
-                beamLength =
-                    Vector3.Dot(
-                        toTarget,
-                        cameraTransform.forward
-                    );
-            }
-
-            Vector3 predictedWorldPosition =
-                laserOrigin.position +
-                cameraTransform.forward * beamLength;
-
-            laserBeamController.SetTargetPosition(predictedWorldPosition);
-        }
+        laserBeamController.SetTargetPosition(
+            beamEnd
+        );
     }
 
     // ============================================================
-    // Geometric "is the target currently visible" check — used only
-    // to decide whether to fall back to ground-truth reacquisition.
+    // ANGLE NORMALIZATION
     // ============================================================
-
-    private bool IsTargetInView()
-    {
-        if (cam == null || targetSatellite == null)
-            return false;
-
-        Vector3 viewportPos =
-            cam.WorldToViewportPoint(targetSatellite.position);
-
-        return viewportPos.z > 0f &&
-               viewportPos.x >= 0f && viewportPos.x <= 1f &&
-               viewportPos.y >= 0f && viewportPos.y <= 1f;
-    }
 
     private float NormalizeAngle(float angle)
     {
+        angle %= 360f;
+
         if (angle > 180f)
             angle -= 360f;
 
