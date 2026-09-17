@@ -1,12 +1,37 @@
 using UnityEngine;
 
+/// <summary>
+/// Coarse acquisition controller for the FSOC gimbal.
+///
+/// Complementary to PATController:
+/// - YOLO has a valid track -> PAT owns the gimbal.
+/// - YOLO has no valid track -> this controller performs coarse
+///   acquisition using the simulator's target position.
+/// - YOLO reacquires -> PAT is handed control again.
+///
+/// The two controllers never write the gimbal at the same time.
+/// </summary>
 public class CoarseGimbalTracker : MonoBehaviour
 {
     [Header("Target")]
     [Tooltip("Automatically follows the satellite selected in the simulator dropdown.")]
     public Transform targetSatellite;
 
+    [Header("PAT Coordination")]
+    [Tooltip("PATController that takes over after YOLO reacquires the target.")]
+    public PATController patController;
+
+    [Tooltip("Tracker used to determine whether YOLO currently has a valid target.")]
+    public Tracker tracker;
+
+    [Tooltip("Disable PAT while coarse acquisition is active, then restore it on YOLO reacquisition.")]
+    public bool handOffToPAT = true;
+
     [Header("Gimbal")]
+    [Tooltip("Yaw transform, normally CoarseGimbal_Y.")]
+    public Transform yawGimbal;
+
+    [Tooltip("Pitch transform, normally CoarseGimbal_X.")]
     public Transform pitchGimbal;
 
     [Header("Tracking Settings")]
@@ -14,6 +39,8 @@ public class CoarseGimbalTracker : MonoBehaviour
     public float pitchSpeed = 30f;
 
     [Header("Angle Limits")]
+    public float minYaw = -80f;
+    public float maxYaw = 80f;
     public float minPitch = -60f;
     public float maxPitch = 60f;
 
@@ -21,71 +48,132 @@ public class CoarseGimbalTracker : MonoBehaviour
     public bool invertYaw = false;
     public bool invertPitch = false;
 
+    [Header("Acquisition")]
+    [Tooltip("Only use coarse pointing while YOLO has no valid detection.")]
+    public bool acquireOnlyWhenPATHasNoTrack = true;
+
+    [Tooltip("Ignore extremely small angular errors to prevent jitter.")]
+    public float angularDeadband = 0.15f;
+
     private float currentYaw;
     private float currentPitch;
 
     private CameraController cameraController;
+    private bool coarseActive;
+    private bool previousTrackState;
 
-    void Start()
+    private void Start()
     {
-        // Get the simulator's existing camera controller.
         cameraController = FindFirstObjectByType<CameraController>();
 
-        // Start from the gimbal's current rotation.
-        currentYaw = transform.localEulerAngles.y;
-        currentPitch = pitchGimbal.localEulerAngles.x;
+        if (yawGimbal == null)
+            yawGimbal = transform;
 
-        // Convert Unity's 0-360 representation into -180 to +180.
-        if (currentYaw > 180f)
-            currentYaw -= 360f;
+        // Initialize state from the actual transforms.
+        SyncGimbalState();
 
-        if (currentPitch > 180f)
-            currentPitch -= 360f;
-
-        // Connect to the currently selected satellite.
         if (cameraController != null)
         {
             cameraController.OnTrackedBodyChanged += OnTrackedBodyChanged;
 
             if (cameraController.CurrentBody != null)
-            {
-                targetSatellite =
-                    cameraController.CurrentBody.transform;
-            }
+                targetSatellite = cameraController.CurrentBody.transform;
         }
         else
         {
             Debug.LogWarning(
-                "[CoarseGimbalTracker] CameraController not found."
+                "[CoarseGimbalTracker] CameraController not found. " +
+                "Assign targetSatellite manually."
             );
         }
+
+        previousTrackState = HasPATTrack();
+        UpdateControllerOwnership(previousTrackState);
     }
 
-    void OnDestroy()
+    private void OnDestroy()
     {
         if (cameraController != null)
-        {
             cameraController.OnTrackedBodyChanged -= OnTrackedBodyChanged;
-        }
+
+        // Do not leave PAT disabled if this component is removed.
+        if (patController != null && !patController.enabled)
+            patController.enabled = true;
     }
 
-    void Update()
+    private void Update()
     {
-        // If the simulator hasn't selected a satellite yet,
-        // keep checking for the CameraController's current target.
         if (targetSatellite == null && cameraController != null)
         {
             if (cameraController.CurrentBody != null)
-            {
-                targetSatellite =
-                    cameraController.CurrentBody.transform;
-            }
+                targetSatellite = cameraController.CurrentBody.transform;
         }
 
-        if (targetSatellite == null || pitchGimbal == null)
+        bool hasTrack = HasPATTrack();
+
+        if (hasTrack != previousTrackState)
+        {
+            UpdateControllerOwnership(hasTrack);
+            previousTrackState = hasTrack;
+        }
+
+        // PAT owns the gimbal whenever YOLO has a valid detection.
+        if (hasTrack)
             return;
 
-        TrackTarget();
+        if (targetSatellite == null ||
+            yawGimbal == null ||
+            pitchGimbal == null)
+            return;
+
+        TrackTargetCoarsely();
+    }
+
+    private bool HasPATTrack()
+    {
+        return tracker != null &&
+               tracker.enabled &&
+               tracker.targetDetected;
+    }
+
+    private void UpdateControllerOwnership(bool hasTrack)
+    {
+        coarseActive =
+            acquireOnlyWhenPATHasNoTrack
+                ? !hasTrack
+                : true;
+
+        if (!handOffToPAT || patController == null)
+            return;
+
+        // Only one controller writes the gimbal at a time.
+        if (coarseActive)
+        {
+            // Synchronize immediately when coarse acquisition takes ownership.
+            SyncGimbalState();
+
+            if (patController.enabled)
+            {
+                patController.enabled = false;
+
+                Debug.Log(
+                    "[CoarseGimbalTracker] YOLO track lost -> " +
+                    "coarse acquisition active, PAT paused."
+                );
+            }
+        }
+        else
+        {
+            if (!patController.enabled)
+            {
+                patController.enabled = true;
+
+                Debug.Log(
+                    "[CoarseGimbalTracker] YOLO reacquired target -> " +
+                    "PAT control restored."
+                );
+            }
+        }
     }
 
     private void OnTrackedBodyChanged(NBody newTarget)
@@ -99,65 +187,196 @@ public class CoarseGimbalTracker : MonoBehaviour
         targetSatellite = newTarget.transform;
 
         Debug.Log(
-            "[CoarseGimbalTracker] Tracking: " +
+            "[CoarseGimbalTracker] Acquisition target: " +
             newTarget.name
         );
     }
 
-    void TrackTarget()
+    /// <summary>
+    /// Reads the ACTUAL gimbal transforms.
+    ///
+    /// The Transform is the single source of truth because PATController
+    /// can also modify these transforms during normal tracking.
+    /// </summary>
+    private void SyncGimbalState()
     {
+        if (yawGimbal != null)
+        {
+            currentYaw =
+                NormalizeAngle(yawGimbal.localEulerAngles.y);
+        }
+
+        if (pitchGimbal != null)
+        {
+            currentPitch =
+                NormalizeAngle(pitchGimbal.localEulerAngles.x);
+        }
+    }
+
+    private void TrackTargetCoarsely()
+    {
+        if (!coarseActive)
+            return;
+
         // ---------------------------------------------------------
-        // 1. FIND TARGET DIRECTION
+        // IMPORTANT:
+        // The actual Transform is authoritative.
+        //
+        // PATController may have changed the gimbal since our last
+        // frame, so synchronize before calculating any new command.
+        // ---------------------------------------------------------
+
+        SyncGimbalState();
+
+        // ---------------------------------------------------------
+        // 1. TARGET DIRECTION
         // ---------------------------------------------------------
 
         Vector3 targetDirection =
-            targetSatellite.position - transform.position;
+            targetSatellite.position - yawGimbal.position;
 
-        if (targetDirection.sqrMagnitude < 0.001f)
+        if (targetDirection.sqrMagnitude < 0.000001f)
             return;
 
         targetDirection.Normalize();
 
-
         // ---------------------------------------------------------
-        // 2. YAW CALCULATION
+        // 2. YAW
+        //
+        // Calculate the target direction RELATIVE TO THE CURRENT
+        // YAW GIMBAL ORIENTATION.
+        //
+        // This gives us an angular ERROR, not an absolute yaw.
+        //
+        // Therefore:
+        //
+        //     desiredYaw = currentYaw + yawError
+        //
+        // This avoids mixing the parent's coordinate frame with
+        // the yaw gimbal's actual rotation frame.
         // ---------------------------------------------------------
 
         Vector3 localDirection =
-            transform.parent != null
-            ? transform.parent.InverseTransformDirection(targetDirection)
-            : targetDirection;
+            yawGimbal.InverseTransformDirection(targetDirection);
 
-        float desiredYaw =
+        float yawError =
             Mathf.Atan2(
                 localDirection.x,
                 localDirection.z
             ) * Mathf.Rad2Deg;
 
+        yawError = Mathf.DeltaAngle(0f, yawError);
+
+        // ---------------------------------------------------------
+        // Target is behind the gimbal.
+        //
+        // At exactly 180 degrees, +180 and -180 are physically
+        // identical but numerically opposite. Because the gimbal
+        // has a limited range, choose whichever limit is closer
+        // to the CURRENT gimbal position.
+        //
+        // This prevents tiny floating-point changes around 180°
+        // from commanding the gimbal to suddenly switch sides.
+        // ---------------------------------------------------------
+
+        float desiredYaw;
+
+        if (Mathf.Abs(yawError) > 90f)
+        {
+            float distanceToMin =
+                Mathf.Abs(Mathf.DeltaAngle(currentYaw, minYaw));
+
+            float distanceToMax =
+                Mathf.Abs(Mathf.DeltaAngle(currentYaw, maxYaw));
+
+            desiredYaw =
+                distanceToMin <= distanceToMax
+                    ? minYaw
+                    : maxYaw;
+        }
+        else
+        {
+            desiredYaw =
+                currentYaw + yawError;
+        }
+
         if (invertYaw)
-            desiredYaw = -desiredYaw;
+        {
+            float invertedError = -yawError;
 
+            if (Mathf.Abs(invertedError) > 90f)
+            {
+                float distanceToMin =
+                    Mathf.Abs(Mathf.DeltaAngle(currentYaw, minYaw));
 
-        // ---------------------------------------------------------
-        // 3. MOVE Y GIMBAL
-        // ---------------------------------------------------------
+                float distanceToMax =
+                    Mathf.Abs(Mathf.DeltaAngle(currentYaw, maxYaw));
 
-        currentYaw = Mathf.MoveTowardsAngle(
-            currentYaw,
-            desiredYaw,
-            yawSpeed * Time.deltaTime
-        );
+                desiredYaw =
+                    distanceToMin <= distanceToMax
+                        ? minYaw
+                        : maxYaw;
+            }
+            else
+            {
+                desiredYaw =
+                    currentYaw + invertedError;
+            }
+        }
 
-        transform.localRotation =
-            Quaternion.Euler(
-                0f,
-                currentYaw,
-                0f
+        desiredYaw =
+            Mathf.Clamp(
+                desiredYaw,
+                minYaw,
+                maxYaw
             );
 
+        Debug.Log(
+            $"COARSE YAW | " +
+            $"Target={targetSatellite.name} " +
+            $"LocalDir={localDirection} " +
+            $"YawError={yawError:F2} " +
+            $"Current={currentYaw:F2} " +
+            $"Desired={desiredYaw:F2} " +
+            $"Actual={NormalizeAngle(yawGimbal.localEulerAngles.y):F2}"
+        );
 
         // ---------------------------------------------------------
-        // 4. FIND TARGET DIRECTION AFTER YAW
+        // MOVE YAW
+        // ---------------------------------------------------------
+
+        if (Mathf.Abs(
+                Mathf.DeltaAngle(currentYaw, desiredYaw)
+            ) > angularDeadband)
+        {
+            currentYaw =
+                Mathf.MoveTowardsAngle(
+                    currentYaw,
+                    desiredYaw,
+                    yawSpeed * Time.deltaTime
+                );
+
+            currentYaw =
+                Mathf.Clamp(
+                    currentYaw,
+                    minYaw,
+                    maxYaw
+                );
+
+            yawGimbal.localRotation =
+                Quaternion.Euler(
+                    0f,
+                    currentYaw,
+                    0f
+                );
+        }
+
+        // ---------------------------------------------------------
+        // 3. PITCH
+        //
+        // Same principle as yaw:
+        // calculate the target relative to the CURRENT pitch
+        // gimbal orientation and treat the result as an error.
         // ---------------------------------------------------------
 
         Vector3 pitchDirection =
@@ -166,52 +385,97 @@ public class CoarseGimbalTracker : MonoBehaviour
                 pitchGimbal.position
             );
 
-        if (pitchDirection.sqrMagnitude < 0.001f)
+        if (pitchDirection.sqrMagnitude < 0.000001f)
             return;
 
         pitchDirection.Normalize();
 
-
-        // ---------------------------------------------------------
-        // 5. PITCH CALCULATION
-        // ---------------------------------------------------------
-
-        float desiredPitch =
+        float pitchError =
             -Mathf.Atan2(
                 pitchDirection.y,
                 pitchDirection.z
             ) * Mathf.Rad2Deg;
 
-        if (invertPitch)
-            desiredPitch = -desiredPitch;
-
-
-        // ---------------------------------------------------------
-        // 6. LIMIT PITCH
-        // ---------------------------------------------------------
-
-        desiredPitch = Mathf.Clamp(
-            desiredPitch,
-            minPitch,
-            maxPitch
-        );
-
-
-        // ---------------------------------------------------------
-        // 7. MOVE X GIMBAL
-        // ---------------------------------------------------------
-
-        currentPitch = Mathf.MoveTowardsAngle(
-            currentPitch,
-            desiredPitch,
-            pitchSpeed * Time.deltaTime
-        );
-
-        pitchGimbal.localRotation =
-            Quaternion.Euler(
-                currentPitch,
+        pitchError =
+            Mathf.DeltaAngle(
                 0f,
-                0f
+                pitchError
             );
+
+        float desiredPitch =
+            currentPitch + pitchError;
+
+        if (invertPitch)
+            desiredPitch =
+                currentPitch - pitchError;
+
+        desiredPitch =
+            Mathf.Clamp(
+                desiredPitch,
+                minPitch,
+                maxPitch
+            );
+
+        Debug.Log(
+            $"COARSE PITCH | " +
+            $"Target={targetSatellite.name} " +
+            $"PitchDir={pitchDirection} " +
+            $"PitchError={pitchError:F2} " +
+            $"Current={currentPitch:F2} " +
+            $"Desired={desiredPitch:F2} " +
+            $"Actual={NormalizeAngle(pitchGimbal.localEulerAngles.x):F2}"
+        );
+
+        // ---------------------------------------------------------
+        // MOVE PITCH
+        // ---------------------------------------------------------
+
+        if (Mathf.Abs(
+                Mathf.DeltaAngle(currentPitch, desiredPitch)
+            ) > angularDeadband)
+        {
+            currentPitch =
+                Mathf.MoveTowardsAngle(
+                    currentPitch,
+                    desiredPitch,
+                    pitchSpeed * Time.deltaTime
+                );
+
+            currentPitch =
+                Mathf.Clamp(
+                    currentPitch,
+                    minPitch,
+                    maxPitch
+                );
+
+            pitchGimbal.localRotation =
+                Quaternion.Euler(
+                    currentPitch,
+                    0f,
+                    0f
+                );
+        }
+
+        // ---------------------------------------------------------
+        // FINAL STATE CHECK
+        // ---------------------------------------------------------
+
+        Debug.Log(
+            $"AFTER WRITE | " +
+            $"Yaw State={currentYaw:F2} " +
+            $"Yaw Actual={NormalizeAngle(yawGimbal.localEulerAngles.y):F2} | " +
+            $"Pitch State={currentPitch:F2} " +
+            $"Pitch Actual={NormalizeAngle(pitchGimbal.localEulerAngles.x):F2}"
+        );
+    }
+
+    private float NormalizeAngle(float angle)
+    {
+        angle %= 360f;
+
+        if (angle > 180f)
+            angle -= 360f;
+
+        return angle;
     }
 }
