@@ -2,10 +2,14 @@
 A confidence- aware virtual PAT system that turns signal uncertainty into a prediction, not a failure. 
 
 Problem Statement ID - SIH 26169
+
 Problem Statement Title - Development of an AI-Based Virtual Camera Tracking System for Course Alignment of Mobile Free Space Optical Communication (FSOC) Terminals
 Theme -Smart Automation
+
 PS Category - Software
+
 Team ID - SIH075
+
 Team Name - PROJECT Solaris
 
 # System Architecture 
