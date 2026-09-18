@@ -1,3 +1,87 @@
+<img width="2549" height="1513" alt="Closed-Loop FSOC Tracking Architecture" src="https://github.com/user-attachments/assets/0a2207bc-e78d-4ad2-9c9d-89b6d3615a11" /># Solaris System Architechture
+```mermaid
+flowchart TD
+
+subgraph group_g1["User Interaction"]
+  node_input_ui["Input and UI"]
+end
+
+subgraph group_g2["Unity Control"]
+  node_camera["Camera Control"]
+  node_orchestrator["Simulation Orchestrator"]
+  node_satellite_setup["Satellite Setup"]
+  node_maneuver_planner["Maneuver Planner"]
+  node_time_control["Time Control"]
+end
+
+subgraph group_g3["Physics Engine"]
+  node_interop["Native Interop"]
+  node_integrator["Orbit Integrator"]
+  node_force_models["Force Models"]
+  node_orbit_state["Orbital State"]
+end
+
+subgraph group_g4["Analysis Visualization"]
+  node_preview["Trajectory Preview"]
+  node_gpu_preview["GPU RK4 Preview"]
+  node_orbit_analysis["Orbit Analysis"]
+  node_renderer["Scene Renderer"]
+  node_vector_overlay["Vector Overlays"]
+end
+
+node_user(("User"))
+node_tle_source["TLE Source"]
+
+node_user -->|"provides input"| node_input_ui
+node_input_ui -->|"dispatches actions"| node_orchestrator
+node_input_ui -->|"controls camera"| node_camera
+node_input_ui -->|"starts setup"| node_satellite_setup
+node_input_ui -->|"edits maneuvers"| node_maneuver_planner
+node_input_ui -->|"changes speed"| node_time_control
+node_tle_source -.->|"supplies TLEs"| node_satellite_setup
+node_satellite_setup -->|"submits satellite"| node_orchestrator
+node_maneuver_planner -->|"submits burns"| node_orchestrator
+node_time_control -->|"sets timestep"| node_orchestrator
+node_orchestrator -->|"invokes native"| node_interop
+node_interop -->|"calls integration"| node_integrator
+node_integrator -->|"evaluates forces"| node_force_models
+node_integrator -->|"updates state"| node_orbit_state
+node_orchestrator -->|"requests previews"| node_preview
+node_preview -->|"runs baseline"| node_gpu_preview
+node_orchestrator -->|"requests readouts"| node_orbit_analysis
+node_orbit_state -->|"provides state"| node_orbit_analysis
+node_orbit_state -->|"provides positions"| node_renderer
+node_orbit_analysis -->|"provides vectors"| node_vector_overlay
+node_camera -->|"sets view"| node_renderer
+node_renderer -->|"shows simulation"| node_user
+
+click node_input_ui "https://github.com/ankit-raj06/fsoc_project/tree/main/Assets"
+click node_camera "https://github.com/ankit-raj06/fsoc_project/tree/main/Assets"
+click node_orchestrator "https://github.com/ankit-raj06/fsoc_project/tree/main/Assets"
+click node_satellite_setup "https://github.com/ankit-raj06/fsoc_project/tree/main/Assets"
+click node_maneuver_planner "https://github.com/ankit-raj06/fsoc_project/tree/main/Assets"
+click node_time_control "https://github.com/ankit-raj06/fsoc_project/tree/main/Assets"
+click node_preview "https://github.com/ankit-raj06/fsoc_project/tree/main/Assets"
+click node_gpu_preview "https://github.com/ankit-raj06/fsoc_project/tree/main/Assets"
+click node_orbit_analysis "https://github.com/ankit-raj06/fsoc_project/tree/main/Assets"
+click node_renderer "https://github.com/ankit-raj06/fsoc_project/tree/main/Assets"
+click node_vector_overlay "https://github.com/ankit-raj06/fsoc_project/tree/main/Assets"
+
+classDef toneNeutral fill:#f8fafc,stroke:#334155,stroke-width:1.5px,color:#0f172a
+classDef toneBlue fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#172554
+classDef toneAmber fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f
+classDef toneMint fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d
+classDef toneRose fill:#ffe4e6,stroke:#e11d48,stroke-width:1.5px,color:#881337
+classDef toneIndigo fill:#e0e7ff,stroke:#4f46e5,stroke-width:1.5px,color:#312e81
+classDef toneTeal fill:#ccfbf1,stroke:#0f766e,stroke-width:1.5px,color:#134e4a
+class node_input_ui,node_user toneBlue
+class node_camera,node_orchestrator,node_satellite_setup,node_maneuver_planner,node_time_control toneAmber
+class node_interop,node_integrator,node_force_models,node_orbit_state toneMint
+class node_preview,node_gpu_preview,node_orbit_analysis,node_renderer,node_vector_overlay toneRose
+class node_tle_source toneIndigo
+```
+<img width="2549" height="1513" alt="Closed-Loop FSOC Tracking Architecture" src="https://github.com/user-attachments/assets/03ddc927-d0eb-475b-8060-9291cc48f44a" />
+
 # Orbital Control Simulator
 
 This is a real-time orbital mechanics simulator built in Unity, with the actual physics simulation running in native C++.
