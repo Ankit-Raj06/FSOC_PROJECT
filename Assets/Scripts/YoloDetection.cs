@@ -5,6 +5,21 @@ public class YoloDetection : MonoBehaviour
 {
     public Tracker tracker;
 
+    [Header("Debug")]
+public bool showDebugPreview = false;
+public ScreenCorner previewCorner = ScreenCorner.BottomLeft;
+public Vector2 previewOffset = new Vector2(16, 16);
+public float previewSize = 200f;
+
+private void OnGUI()
+{
+    if (showDebugPreview && readbackTex != null)
+    {
+        Rect r = DisturbancePanel.Anchor(previewCorner, new Vector2(previewSize, previewSize), previewOffset);
+        GUI.DrawTexture(r, readbackTex);
+    }
+}
+
     [Header("Camera")]
     [Tooltip("The camera whose view YOLO runs inference on.")]
     public Camera datasetCamera;
@@ -66,11 +81,16 @@ public class YoloDetection : MonoBehaviour
         RenderTexture prevTarget = datasetCamera.targetTexture;
 
         datasetCamera.targetTexture = captureRT;
-        datasetCamera.Render();
-        RenderTexture.active = captureRT;
+	datasetCamera.Render();
+	RenderTexture.active = captureRT;
 
-        readbackTex.ReadPixels(new Rect(0, 0, inputSize, inputSize), 0, 0);
-        readbackTex.Apply();
+	readbackTex.ReadPixels(new Rect(0, 0, inputSize, inputSize), 0, 0);
+
+	// NEW: inject disturbances into the frame YOLO will see
+	if (DisturbanceManager.Instance != null)
+    		DisturbanceManager.Instance.ApplyImageDisturbances(readbackTex);
+
+	readbackTex.Apply();
 
         datasetCamera.targetTexture = prevTarget;
         RenderTexture.active = prevActive;
