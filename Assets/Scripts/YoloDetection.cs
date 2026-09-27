@@ -49,8 +49,25 @@ private void OnGUI()
     private Tensor<float> inputTensor;
     private int frameCounter;
 
+    // ============================================================
+    // UI TELEMETRY
+    // ============================================================
+
+    /// <summary>Confidence of the most recent accepted detection.</summary>
+    public float LastConfidence { get; private set; }
+
+    /// <summary>Elapsed CPU-side inference scheduling time in milliseconds.</summary>
+    public float LastInferenceMs { get; private set; }
+
     private void Awake()
     {
+        if (modelAsset == null)
+        {
+            Debug.LogError("[YoloDetection] ModelAsset is not assigned.");
+            enabled = false;
+            return;
+        }
+
         var runtimeModel = ModelLoader.Load(modelAsset);
         worker = new Worker(runtimeModel, BackendType.GPUCompute);
 
@@ -68,7 +85,8 @@ private void OnGUI()
             return;
 
         frameCounter++;
-        if (frameCounter % inferenceIntervalFrames != 0)
+        int interval = Mathf.Max(1, inferenceIntervalFrames);
+        if (frameCounter % interval != 0)
             return;
 
         RunInference();
@@ -100,9 +118,11 @@ private void OnGUI()
         TextureConverter.ToTensor(readbackTex, inputTensor, new TextureTransform());
 
         // 3) Run the model
+        float inferenceStart = Time.realtimeSinceStartup;
         worker.Schedule(inputTensor);
         using Tensor<float> output = worker.PeekOutput() as Tensor<float>;
         using Tensor<float> outputCpu = output.ReadbackAndClone();
+        LastInferenceMs = (Time.realtimeSinceStartup - inferenceStart) * 1000f;
 
         // outputCpu shape is (1, 5, 8400): rows = [cx, cy, w, h, objectness],
         // already in pixel space (0..inputSize) thanks to the baked-in
@@ -121,6 +141,7 @@ private void OnGUI()
 
         if (bestBoxCenterPixels == null)
         {
+            LastConfidence = 0f;
             tracker.ClearDetection(); // no valid detection this pass — tell the tracker, don't just go silent
             return;
         }
@@ -153,6 +174,7 @@ private void OnGUI()
             }
         }
 
+        LastConfidence = best != null ? bestConf : 0f;
         return best;
     }
 

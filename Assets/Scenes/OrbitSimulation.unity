@@ -4449,7 +4449,7 @@ RectTransform:
   m_Father: {fileID: 1373335021}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 0}
-  m_AnchorMax: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 1}
   m_AnchoredPosition: {x: -3.199997, y: 0}
   m_SizeDelta: {x: 20, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
@@ -6741,7 +6741,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!114 &294874403
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -7026,9 +7026,9 @@ MonoBehaviour:
   targetSatellite: {fileID: 672936356}
   laserOrigin: {fileID: 206394796}
   laserBeam: {fileID: 687940525}
-  positiveFOVImages: 1000
-  negativeFOVImages: 1000
-  misalignedLaserImages: 1000
+  positiveFOVImages: 1
+  negativeFOVImages: 1
+  misalignedLaserImages: 1
   width: 1920
   height: 1080
   jpegQuality: 100
@@ -10152,7 +10152,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!4 &430458193
 Transform:
   m_ObjectHideFlags: 0
@@ -12651,7 +12651,7 @@ RectTransform:
   m_Father: {fileID: 506785703}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 0}
-  m_AnchorMax: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 1}
   m_AnchoredPosition: {x: 82.5, y: 0}
   m_SizeDelta: {x: -146, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
@@ -13101,6 +13101,7 @@ GameObject:
   m_Component:
   - component: {fileID: 585928255}
   - component: {fileID: 585928256}
+  - component: {fileID: 585928257}
   m_Layer: 0
   m_Name: PATController
   m_TagString: Untagged
@@ -13142,13 +13143,44 @@ MonoBehaviour:
   targetSatellite: {fileID: 672936356}
   coarseGimbalY: {fileID: 1867381435}
   coarseGimbalX: {fileID: 1004110597}
-  rotationSpeed: 5
+  rotationSpeed: 150
+  laserBeamController: {fileID: 687940526}
+  predictionDistance: 10
+  useTargetDistanceForBeamLength: 0
+  reacquisitionHoldTime: 1
   horizontalLimit: 80
   verticalLimit: 60
-  predictionDistance: 10
-  laserBeamController: {fileID: 687940526}
-  useTargetDistanceForBeamLength: 1
-  autoReacquireWhenOutOfView: 1
+  scanSpeed: 200
+  searchYawRange: 180
+  searchPitchRange: 90
+  pitchStepDegrees: 25
+  waypointTolerance: 1
+  invertYaw: 0
+  invertPitch: 0
+  debugLogs: 1
+--- !u!114 &585928257
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 585928254}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: cb7e77f0a5e9e9c4388443c59018ce2f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: CoreRuntime::SearchAcquisitionController
+  tracker: {fileID: 2033442728}
+  coarseGimbalY: {fileID: 1867381435}
+  coarseGimbalX: {fileID: 1004110597}
+  minYaw: -80
+  maxYaw: 80
+  minPitch: -60
+  maxPitch: 60
+  scanSpeed: 200
+  pitchStepDegrees: 25
+  waypointTolerance: 1
+  debugLogs: 1
 --- !u!1 &594965729
 GameObject:
   m_ObjectHideFlags: 0
@@ -13197,7 +13229,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!4 &598093764
 Transform:
   m_ObjectHideFlags: 0
@@ -13226,12 +13258,16 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: CoreRuntime::YoloDetection
   tracker: {fileID: 2033442728}
+  showDebugPreview: 1
+  previewCorner: 2
+  previewOffset: {x: 16, y: 16}
+  previewSize: 200
   datasetCamera: {fileID: 1025856899}
   modelAsset: {fileID: 5022602860645237092, guid: a8cbaa6de51f28047909e124b4049ade, type: 3}
   inputSize: 640
   confidenceThreshold: 0.4
   inferenceIntervalFrames: 1
-  logMaxConfidence: 1
+  logMaxConfidence: 0
 --- !u!1 &617944506
 GameObject:
   m_ObjectHideFlags: 0
@@ -14273,7 +14309,7 @@ Transform:
   m_GameObject: {fileID: 672936355}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 709, y: 0, z: 0}
+  m_LocalPosition: {x: 720, y: 0, z: 0}
   m_LocalScale: {x: 0.008, y: 0.008, z: 0.008}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -14696,7 +14732,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: CoreRuntime::LaserCylinderBeam
   laserOrigin: {fileID: 206394796}
   target: {fileID: 0}
-  laserBeam: {fileID: 687940525}
+  laserBeam: {fileID: 0}
   beamRadius: 0.001
 --- !u!23 &687940527
 MeshRenderer:
@@ -15603,7 +15639,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!4 &716810391
 Transform:
   m_ObjectHideFlags: 0
@@ -17385,7 +17421,7 @@ RectTransform:
   m_Father: {fileID: 2115508179}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 0}
-  m_AnchorMax: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 1}
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 10, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
@@ -17742,6 +17778,145 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 812988479}
   m_CullTransparentMesh: 1
+--- !u!1 &815554214
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 815554215}
+  - component: {fileID: 815554217}
+  - component: {fileID: 815554216}
+  m_Layer: 0
+  m_Name: Disturbances
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &815554215
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 815554214}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1739926632}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &815554216
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 815554214}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ec2c7b6a20ebd1f41b79a61c6e2fc83b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: CoreRuntime::DisturbanceManager
+  disturbancesEnabled: 1
+  settings:
+    seed: 12345
+    environment: 0
+    useManualAltitude: 0
+    manualAltitudeKm: 0
+    gaussianEnabled: 0
+    gaussianSigma: 0.03
+    saltPepperEnabled: 0
+    saltPepperAmount: 0.01
+    saltFraction: 0.5
+    poissonEnabled: 0
+    photonFullWell: 400
+    jitterEnabled: 0
+    jitterPx: 5
+    jitterCorrelation: 0.2
+    jitterReferenceResolution: 640
+    platform:
+      type: 0
+      plane: 0
+      linearDirection: {x: 1, y: 0, z: 0}
+      linearSpeed: 1
+      linearRange: 20
+      amplitude: 5
+      angularSpeedDeg: 20
+      spiralMinRadius: 1
+      spiralMaxRadius: 6
+      spiralRadialSeconds: 20
+      randomFrequencyHz: 0.3
+    weather: 0
+    hazeIntensity: 0.5
+    fogIntensity: 0.5
+    rainIntensity: 0.5
+    lowLightIntensity: 0.5
+  customPresets: []
+  atmosphere:
+    blendKm: 1
+    bands:
+    - name: Boundary layer (Earth reference)
+      startKm: 0
+      noiseScale: 1
+      impulseScale: 1
+      jitterScale: 1
+      weatherScale: 1
+      allowedWeather: 15
+    - name: Free troposphere
+      startKm: 2
+      noiseScale: 1
+      impulseScale: 1
+      jitterScale: 0.7
+      weatherScale: 0.4
+      allowedWeather: 13
+    - name: Stratosphere
+      startKm: 12
+      noiseScale: 1
+      impulseScale: 1.5
+      jitterScale: 0.3
+      weatherScale: 0.05
+      allowedWeather: 9
+    - name: Upper atmosphere
+      startKm: 50
+      noiseScale: 1
+      impulseScale: 2.5
+      jitterScale: 0.2
+      weatherScale: 0.005
+      allowedWeather: 8
+    - name: Space
+      startKm: 100
+      noiseScale: 1
+      impulseScale: 4
+      jitterScale: 0.2
+      weatherScale: 0
+      allowedWeather: 8
+  altitudeSource: {fileID: 0}
+  planetCenter: {fileID: 0}
+  unitsToKm: 1
+  planetRadiusKm: 6371
+--- !u!114 &815554217
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 815554214}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 207184cf434f99d428024d79a0915f84, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: CoreRuntime::DisturbancePanel
+  manager: {fileID: 0}
+  startOpen: 0
+  buttonCorner: 0
+  buttonOffset: {x: 16, y: 60}
+  buttonSize: {x: 150, y: 26}
 --- !u!1 &816464653
 GameObject:
   m_ObjectHideFlags: 0
@@ -17949,6 +18124,7 @@ GameObject:
   - component: {fileID: 821180006}
   - component: {fileID: 821180005}
   - component: {fileID: 821180004}
+  - component: {fileID: 821180007}
   m_Layer: 0
   m_Name: Sphere
   m_TagString: Untagged
@@ -18049,6 +18225,18 @@ MeshFilter:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 821180002}
   m_Mesh: {fileID: 10207, guid: 0000000000000000e000000000000000, type: 0}
+--- !u!114 &821180007
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 821180002}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 272de2f675444554086c00f59c535086, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: CoreRuntime::OpticalAxisDiagnostic
 --- !u!1 &828116620
 GameObject:
   m_ObjectHideFlags: 0
@@ -20013,8 +20201,8 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 952234691}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 0}
-  m_AnchorMax: {x: 0, y: 0}
+  m_AnchorMin: {x: 1, y: 0}
+  m_AnchorMax: {x: 1, y: 1}
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 20, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
@@ -20210,7 +20398,7 @@ RectTransform:
   m_Father: {fileID: 465767028}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 0}
-  m_AnchorMax: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 1}
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 20, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
@@ -21793,6 +21981,50 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1011244400}
   m_CullTransparentMesh: 1
+--- !u!1 &1014435016
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1014435017}
+  - component: {fileID: 1014435018}
+  m_Layer: 0
+  m_Name: FSOC Evaluation Dashboard
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &1014435017
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1014435016}
+  serializedVersion: 2
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 707.7959, y: 0.0056000017, z: 0.0063269157}
+  m_LocalScale: {x: 0.0024, y: 0.0008000001, z: 0.0024}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1739926632}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1014435018
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1014435016}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0f884c473a5b7ca4e82b4e0208a2d0fc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: CoreRuntime::FSOCDashboardUI
 --- !u!1 &1019586386
 GameObject:
   m_ObjectHideFlags: 0
@@ -26789,7 +27021,7 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1025856896}
   serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
@@ -26873,7 +27105,7 @@ Camera:
     height: 1
   near clip plane: 0.3
   far clip plane: 1000
-  field of view: 60
+  field of view: 3
   orthographic: 0
   orthographic size: 5
   m_Depth: 0
@@ -26898,7 +27130,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1025856896}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 5be5f22788c109f4ea9c5e9055aa6300, type: 3}
   m_Name: 
@@ -27201,7 +27433,7 @@ RectTransform:
   m_Father: {fileID: 1301282535}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 0}
-  m_AnchorMax: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 1}
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 20, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
@@ -27430,7 +27662,7 @@ RectTransform:
   m_Father: {fileID: 735861859}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 0}
-  m_AnchorMax: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 1}
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 10, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
@@ -30313,7 +30545,7 @@ RectTransform:
   m_Father: {fileID: 1259201250}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 0}
-  m_AnchorMax: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 1}
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 20, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
@@ -34394,7 +34626,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!135 &1387400460
 SphereCollider:
   m_ObjectHideFlags: 0
@@ -34775,7 +35007,7 @@ RectTransform:
   m_Father: {fileID: 1104146847}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 0}
-  m_AnchorMax: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 1}
   m_AnchoredPosition: {x: -47.6, y: 2.4999924}
   m_SizeDelta: {x: -113, y: 5}
   m_Pivot: {x: 0.5, y: 0.5}
@@ -35999,7 +36231,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!135 &1455420379
 SphereCollider:
   m_ObjectHideFlags: 0
@@ -38082,7 +38314,7 @@ RectTransform:
   m_Father: {fileID: 367815311}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 0}
-  m_AnchorMax: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 1}
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 10, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
@@ -38658,7 +38890,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!4 &1590649025
 Transform:
   m_ObjectHideFlags: 0
@@ -41797,6 +42029,7 @@ Transform:
   - {fileID: 2136029597}
   - {fileID: 1181115431105424114}
   - {fileID: 1895435197}
+  - {fileID: 1014435017}
   - {fileID: 687940525}
   - {fileID: 317879891}
   - {fileID: 672936356}
@@ -41804,6 +42037,7 @@ Transform:
   - {fileID: 585928255}
   - {fileID: 430458193}
   - {fileID: 598093764}
+  - {fileID: 815554215}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1744299769
@@ -43431,7 +43665,7 @@ RectTransform:
   m_Father: {fileID: 1004172807}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 0}
-  m_AnchorMax: {x: 0, y: 0}
+  m_AnchorMax: {x: 1, y: 1}
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 10, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
@@ -44302,7 +44536,7 @@ RectTransform:
   m_Father: {fileID: 571602092}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 0}
-  m_AnchorMax: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 1}
   m_AnchoredPosition: {x: 8.3, y: 0.3}
   m_SizeDelta: {x: 20, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
@@ -44875,19 +45109,27 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1867381434}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 71bf43cf9e273d34590750d692b3390f, type: 3}
   m_Name: 
   m_EditorClassIdentifier: CoreRuntime::CoarseGimbalTracker
   targetSatellite: {fileID: 672936356}
+  patController: {fileID: 0}
+  tracker: {fileID: 0}
+  handOffToPAT: 1
+  yawGimbal: {fileID: 0}
   pitchGimbal: {fileID: 1004110597}
   yawSpeed: 30
   pitchSpeed: 30
+  minYaw: -80
+  maxYaw: 80
   minPitch: -60
   maxPitch: 60
   invertYaw: 0
   invertPitch: 0
+  acquireOnlyWhenPATHasNoTrack: 1
+  angularDeadband: 0.15
 --- !u!1 &1867441399
 GameObject:
   m_ObjectHideFlags: 0
@@ -51027,7 +51269,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!135 &2136029594
 SphereCollider:
   m_ObjectHideFlags: 0
