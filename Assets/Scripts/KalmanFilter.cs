@@ -22,41 +22,50 @@ public class KalmanFilter
             return position;
         }
 
-        // Predict position
+        float dt = Mathf.Max(deltaTime, 0.0001f);
+
+        // Predict position.
         Vector2 predictedPosition =
-            position + velocity * deltaTime;
+            position + velocity * dt;
 
         float predictedVariance =
             positionVariance + processNoise;
 
-        // Kalman gain
-        float kalmanGain =
-            predictedVariance /
-            (predictedVariance + measurementNoise);
+        // Kalman gain.
+        float denominator =
+            predictedVariance + measurementNoise;
 
-        // Correct prediction using measurement
+        float kalmanGain =
+            denominator > 0f
+                ? predictedVariance / denominator
+                : 0f;
+
+        // Correct prediction using measurement.
         Vector2 newPosition =
             predictedPosition +
-            kalmanGain * (measurement - predictedPosition);
+            kalmanGain *
+            (measurement - predictedPosition);
 
-        // Estimate velocity
-        if (deltaTime > 0.0001f)
-        {
-            velocity =
-                (newPosition - position) / deltaTime;
-        }
+        // Estimate velocity.
+        velocity =
+            (newPosition - position) / dt;
 
         position = newPosition;
 
         positionVariance =
-            (1f - kalmanGain) * predictedVariance;
+            Mathf.Max(
+                0f,
+                (1f - kalmanGain) * predictedVariance
+            );
 
         return position;
     }
 
     public Vector2 Predict(float secondsAhead)
     {
-        return position + velocity * secondsAhead;
+        return position +
+               velocity *
+               Mathf.Max(0f, secondsAhead);
     }
 
     public Vector2 Position

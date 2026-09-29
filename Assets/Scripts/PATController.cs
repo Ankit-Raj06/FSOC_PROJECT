@@ -3,173 +3,207 @@ using UnityEngine;
 /// <summary>
 /// Integrated Search-Acquisition + PAT (Point-Acquire-Track) controller.
 ///
-/// SEARCH MODE  (GimbalOwner = Search)
-///   Runs when tracker.targetDetected == false.
-///   Sweeps ±searchYawRange (default ±180°) × ±searchPitchRange (default ±90°)
-///   in a boustrophedon raster until YOLO fires a real detection.
-///   The transmitter is never given the satellite's true world position —
-///   detection is entirely vision-based (YoloDetection → Tracker).
+/// SEARCH MODE
+///   Sweeps the gimbal until the tracker reports a target detection.
 ///
-/// PAT MODE  (GimbalOwner = PAT)
-///   Runs when tracker.targetDetected == true.
-///   Handoff from Search → PAT is IMMEDIATE: the very next Update() after
-///   tracker.targetDetected flips true switches to PAT with no hold-time
-///   guard on this transition.  "If the receiver is in the FOV, PAT takes
-///   over no matter what."
+/// PAT MODE
+///   Uses the detected/predicted image position to steer the camera/gimbal.
 ///
-///   PAT limits (horizontalLimit / verticalLimit) default to ±180° / ±90°
-///   so the laser can point anywhere in the full sphere reachable by the
-///   2-axis gimbal.  Note: a Y-then-X gimbal has gimbal lock at pitch ≈ ±90°
-///   (the yaw axis collapses). True omnidirectional coverage beyond that
-///   requires a 3-axis gimbal.
+/// LASER
+///   The laser is ALWAYS aligned with the tracking camera's forward axis.
+///   This means the laser remains visible during Search, PAT, and
+///   temporary target-loss/reacquisition periods.
 ///
-///   Tracks using the Kalman-predicted viewport position (tracker.GetPredictedPosition())
-///   converted to a world-space ray via the camera's current rotation and FOV —
-///   does NOT use cam.ViewportPointToRay() which reads the stale cameraToWorldMatrix.
-///
-/// PAT → SEARCH handoff
-///   When YOLO detection drops, PAT holds the gimbal frozen at its last
-///   commanded angles for reacquisitionHoldTime seconds to bridge momentary
-///   inference gaps.  After that window, ownership is released and Search
-///   resumes its sweep.
-///
-/// Prerequisites:
-///   CoarseGimbalTracker  — DISABLED (uses true satellite position)
-///   SimulatedDetection   — DISABLED (uses true satellite position)
-///   DatasetCameraAim     — DISABLED (uses true satellite position)
-///   YoloDetection        — ENABLED  (only legitimate detection source)
+/// IMPORTANT:
+///   The laser does NOT use the true satellite position for pointing.
+///   It only follows the camera/gimbal direction.
 /// </summary>
 public class PATController : MonoBehaviour
 {
-    // ============================================================
-    // INSPECTOR
-    // ============================================================
-
     [Header("References")]
+
+    [Tooltip("Tracker providing target detection and predicted viewport position.")]
     public Tracker tracker;
+
+    [Tooltip("Physical origin of the optical laser.")]
     public Transform laserOrigin;
+
+    [Tooltip("Movable tracking camera.")]
     public Transform cameraTransform;
 
-    [Tooltip("Only used for optional beam-length projection. " +
-             "PAT never reads this position for tracking — " +
-             "all tracking is vision-based.")]
+    [Tooltip("Optional satellite reference. Used ONLY for optional beam length.")]
     public Transform targetSatellite;
 
+
     [Header("Gimbal")]
+
+    [Tooltip("Yaw gimbal transform.")]
     public Transform coarseGimbalY;
+
+    [Tooltip("Pitch gimbal transform.")]
     public Transform coarseGimbalX;
 
-    [Header("PAT — Control")]
-    [Tooltip("Maximum gimbal slew rate while PAT is tracking, degrees/second.")]
-    public float rotationSpeed = 150f;
 
-    [Header("PAT — Beam Output")]
+    [Header("PAT - Control")]
+
+    [Tooltip("Camera/gimbal angular movement speed. Requirement target: 5-10 deg/s.")]
+    public float rotationSpeed = 8f;
+
+    [Tooltip("Pixels of image-space error considered locked.")]
+    public float lockTolerancePixels = 10f;
+
+
+    [Header("PAT - Beam Output")]
+
+    [Tooltip("Controls the visual laser.")]
     public LaserCylinderBeam laserBeamController;
 
-    [Tooltip("Fallback beam length (metres) when target distance is unknown.")]
-    public float predictionDistance = 10f;
+    [Tooltip("Laser length when target-distance mode is disabled.")]
+    public float predictionDistance = 100f;
 
-    [Tooltip("If true, projects the beam to the satellite's actual depth " +
-             "(requires targetSatellite to be assigned).")]
+    [Tooltip("If enabled, beam length is based on the satellite distance projected along the camera axis.")]
     public bool useTargetDistanceForBeamLength = false;
 
-    [Header("PAT — Reacquisition Hold")]
-    [Tooltip("Seconds PAT keeps the gimbal frozen after YOLO detection drops " +
-             "before releasing ownership back to Search. " +
-             "Bridges momentary inference gaps. Set 0 for instant release.")]
+
+    [Header("PAT - Reacquisition Hold")]
+
+    [Tooltip("How long PAT holds the gimbal after detection is temporarily lost.")]
     public float reacquisitionHoldTime = 1.0f;
 
-    [Header("PAT — Gimbal Limits")]
-    [Tooltip("Maximum yaw the gimbal can reach during PAT tracking.\n" +
-             "Set to 180 for full 360° azimuth coverage.\n" +
-             "Note: a 2-axis Y→X gimbal has gimbal lock at pitch ≈ ±90°.")]
-    public float horizontalLimit = 180f;
 
-    [Tooltip("Maximum pitch the gimbal can reach during PAT tracking.\n" +
-             "Set to 90 for full hemisphere elevation coverage.\n" +
-             "Values > 90° cause the gimbal to flip past nadir/zenith.")]
+    [Header("PAT - Gimbal Limits")]
+
+    public float horizontalLimit = 180f;
     public float verticalLimit = 90f;
 
-    [Header("Search — Sweep")]
-    [Tooltip("Gimbal slew rate while searching, degrees/second.")]
-    public float scanSpeed = 200f;
 
-    [Tooltip("Half-range of the yaw sweep during search, degrees. " +
-             "Default 180 sweeps the full 360° circle. " +
-             "Search runs from -searchYawRange to +searchYawRange.")]
+    [Header("Search - Sweep")]
+
+    [Tooltip("Search sweep angular speed.")]
+    public float scanSpeed = 30f;
+
+    [Tooltip("Maximum search yaw.")]
     public float searchYawRange = 180f;
 
-    [Tooltip("Half-range of the pitch sweep during search, degrees. " +
-             "Default 90 covers the full hemisphere. " +
-             "Search runs from -searchPitchRange to +searchPitchRange.")]
+    [Tooltip("Maximum search pitch.")]
     public float searchPitchRange = 90f;
 
-    [Tooltip("Pitch step between raster rows, degrees. " +
-             "Should be ≤ camera vertical FOV to avoid coverage gaps.")]
-    public float pitchStepDegrees = 25f;
+    [Tooltip("Pitch increment between horizontal search rows.")]
+    public float pitchStepDegrees = 2.5f;
 
-    [Tooltip("Angular tolerance for declaring 'reached end of row', degrees.")]
+    [Tooltip("Distance from a search waypoint before moving to the next row.")]
     public float waypointTolerance = 1f;
 
+
     [Header("Axis Settings")]
-    public bool invertYaw   = false;
+
+    [Tooltip("Enable if yaw moves opposite to the target.")]
+    public bool invertYaw = false;
+
+    [Tooltip("Enable if pitch moves opposite to the target.")]
     public bool invertPitch = false;
 
+
     [Header("Debug")]
+
     public bool debugLogs = false;
 
-    // ============================================================
-    // UI TELEMETRY
-    // ============================================================
 
-    /// <summary>Human-readable state exposed to the evaluation dashboard.</summary>
+    // ---------------------------------------------------------
+    // PUBLIC TELEMETRY
+    // ---------------------------------------------------------
+
     public string CurrentModeName
     {
         get { return GimbalOwner.Current.ToString(); }
     }
 
-    // ============================================================
-    // PRIVATE STATE
-    // ============================================================
+    /// <summary>
+    /// Current image-space alignment error in pixels.
+    /// </summary>
+    public float CurrentAlignmentErrorPixels { get; private set; }
+
+    /// <summary>
+    /// True when the target is detected and is within the
+    /// configured pixel lock tolerance.
+    /// </summary>
+    public bool IsTargetLocked { get; private set; }
+
+    /// <summary>
+    /// Current predicted/detected viewport position.
+    /// </summary>
+    public Vector2 CurrentTrackingPosition { get; private set; }
+
+
+    // ---------------------------------------------------------
+    // PRIVATE VARIABLES
+    // ---------------------------------------------------------
 
     private Camera cam;
 
-    // --- PAT state ---
-    private float trackLostTimer  = 0f;
-    private bool  axisDiagLogged  = false;
+    private float trackLostTimer = 0f;
 
-    // --- Search state ---
     private float searchYaw;
     private float searchPitch;
-    private int   searchYawDir    = 1;   // +1 → maxYaw, -1 → minYaw
-    private bool  wasSearching    = false;
-    private float searchStartTime = 0f;
-    private int   sweepPassCount  = 0;
 
-    // ============================================================
-    // LIFECYCLE
-    // ============================================================
+    private int searchYawDir = 1;
+
+    private bool wasSearching = false;
+
+    private float searchStartTime = 0f;
+
+    private int sweepPassCount = 0;
+
+    private bool axisDiagLogged = false;
+
+
+    // ---------------------------------------------------------
+    // UNITY
+    // ---------------------------------------------------------
 
     private void Awake()
     {
         if (cameraTransform != null)
         {
             cam = cameraTransform.GetComponent<Camera>();
+
             if (cam == null)
-                Debug.LogWarning("[PATController] cameraTransform has no Camera component.");
+            {
+                Debug.LogWarning(
+                    "[PATController] cameraTransform does not have a Camera component."
+                );
+            }
+        }
+        else
+        {
+            Debug.LogWarning(
+                "[PATController] Camera Transform is not assigned."
+            );
         }
     }
 
+
     private void Start()
     {
-        // Seed yaw from the actual transform (PAT may have left it anywhere).
-        searchYaw   = NormalizeAngle(coarseGimbalY.localEulerAngles.y);
-        // Always start a fresh sweep from the bottom pitch row of the search envelope.
+        if (coarseGimbalY != null)
+        {
+            searchYaw =
+                NormalizeAngle(coarseGimbalY.localEulerAngles.y);
+        }
+
         searchPitch = -searchPitchRange;
 
+        // Initialize laser immediately.
+        UpdateLaserBeam();
+
         if (debugLogs)
-            Debug.Log("[PATController] Initialised. Entering Search mode.");
+        {
+            Debug.Log(
+                "[PATController] Initialised. Starting Search mode."
+            );
+        }
     }
+
 
     private void OnDisable()
     {
@@ -178,286 +212,656 @@ public class PATController : MonoBehaviour
         {
             GimbalOwner.Current = GimbalController.None;
         }
+
         wasSearching = false;
+        IsTargetLocked = false;
     }
 
-    // ============================================================
-    // UPDATE  — state machine entry point
-    // ============================================================
 
     private void Update()
     {
-        if (tracker       == null || !tracker.enabled ||
+        if (tracker == null ||
+            !tracker.enabled ||
             cameraTransform == null ||
-            coarseGimbalY   == null ||
-            coarseGimbalX   == null ||
-            cam             == null)
+            coarseGimbalY == null ||
+            coarseGimbalX == null ||
+            cam == null)
+        {
+            // Keep laser alive even if PAT references are incomplete.
+            UpdateLaserBeam();
             return;
+        }
+
+
+        // -----------------------------------------------------
+        // TARGET DETECTED
+        // -----------------------------------------------------
 
         if (tracker.targetDetected)
         {
-            // ── YOLO has a live detection → PAT mode ──────────────────────────
-            // Handoff from Search is IMMEDIATE — no guard here.
             RunPAT();
         }
+
+
+        // -----------------------------------------------------
+        // NO TARGET
+        // -----------------------------------------------------
+
         else
         {
-            // ── No detection ─────────────────────────────────────────────────
+            IsTargetLocked = false;
+            CurrentAlignmentErrorPixels = 0f;
+
             if (GimbalOwner.Current == GimbalController.PAT)
             {
-                // Reacquisition hold: freeze gimbal for reacquisitionHoldTime
-                // so Search doesn't sweep away from a momentary YOLO drop.
                 trackLostTimer += Time.deltaTime;
 
+                // Hold current gimbal position temporarily.
                 if (trackLostTimer < reacquisitionHoldTime)
                 {
                     if (debugLogs)
-                        Debug.Log($"[PAT] Track lost — holding for {reacquisitionHoldTime - trackLostTimer:F2}s more.");
-                    return; // keep PAT ownership, write nothing (angles stay frozen)
+                    {
+                        Debug.Log(
+                            $"[PAT] Target temporarily lost. " +
+                            $"Holding for " +
+                            $"{reacquisitionHoldTime - trackLostTimer:F2}s."
+                        );
+                    }
+
+                    // Laser STILL follows camera.
+                    UpdateLaserBeam();
+
+                    return;
                 }
 
-                // Hold expired — surrender ownership.
+
+                // Reacquisition hold expired.
                 trackLostTimer = 0f;
-                GimbalOwner.Current = GimbalController.None;
+
+                GimbalOwner.Current =
+                    GimbalController.None;
 
                 if (debugLogs)
-                    Debug.Log("[PAT] Hold expired. Releasing gimbal → Search.");
+                {
+                    Debug.Log(
+                        "[PAT] Reacquisition hold expired. " +
+                        "Releasing gimbal to Search."
+                    );
+                }
             }
 
-            // ── SEARCH mode ───────────────────────────────────────────────────
             RunSearch();
         }
-    }
 
-    // ============================================================
-    // PAT MODE
-    // ============================================================
 
-    private void RunPAT()
-    {
-        // Reset timers whenever we have a valid track.
-        trackLostTimer = 0f;
+        // -----------------------------------------------------
+        // LASER ALWAYS FOLLOWS CAMERA
+        // -----------------------------------------------------
 
-        // If we were searching, log the handoff.
-        if (wasSearching)
-        {
-            if (debugLogs)
-                Debug.Log($"[Search→PAT] Target acquired after {Time.time - searchStartTime:F2}s " +
-                          $"and {sweepPassCount} full sweep(s). Handing off to PAT.");
-            wasSearching = false;
-        }
-
-        GimbalOwner.Current = GimbalController.PAT;
-
-        Vector2 predicted = tracker.GetPredictedPosition();
-        predicted.x = Mathf.Clamp01(predicted.x);
-        predicted.y = Mathf.Clamp01(predicted.y);
-
-        TrackUsingCameraRay(predicted);
         UpdateLaserBeam();
     }
 
-    // ============================================================
-    // PAT TRACKING — camera-ray based yaw / pitch
-    // ============================================================
+
+    // =========================================================
+    // PAT
+    // =========================================================
+
+    private void RunPAT()
+    {
+        trackLostTimer = 0f;
+
+        if (wasSearching)
+        {
+            if (debugLogs)
+            {
+                Debug.Log(
+                    $"[Search -> PAT] Target acquired after " +
+                    $"{Time.time - searchStartTime:F2}s and " +
+                    $"{sweepPassCount} full sweep(s)."
+                );
+            }
+
+            wasSearching = false;
+        }
+
+
+        GimbalOwner.Current =
+            GimbalController.PAT;
+
+
+        // Get predicted target position from Tracker.
+        Vector2 predicted =
+            tracker.GetPredictedPosition();
+
+        predicted.x =
+            Mathf.Clamp01(predicted.x);
+
+        predicted.y =
+            Mathf.Clamp01(predicted.y);
+
+
+        CurrentTrackingPosition =
+            predicted;
+
+
+        // Calculate image-space error in pixels.
+        CalculateAlignmentError(predicted);
+
+
+        // Move camera/gimbal toward target.
+        TrackUsingCameraRay(predicted);
+    }
+
+
+    // =========================================================
+    // IMAGE-SPACE ALIGNMENT
+    // =========================================================
+
+    private void CalculateAlignmentError(Vector2 predicted)
+    {
+        Vector2 centre =
+            new Vector2(0.5f, 0.5f);
+
+        Vector2 normalizedError =
+            predicted - centre;
+
+
+        float width =
+            Mathf.Max(1f, cam.pixelWidth);
+
+        float height =
+            Mathf.Max(1f, cam.pixelHeight);
+
+
+        float pixelX =
+            normalizedError.x * width;
+
+        float pixelY =
+            normalizedError.y * height;
+
+
+        CurrentAlignmentErrorPixels =
+            Mathf.Sqrt(
+                pixelX * pixelX +
+                pixelY * pixelY
+            );
+
+
+        IsTargetLocked =
+            CurrentAlignmentErrorPixels <=
+            lockTolerancePixels;
+    }
+
+
+    // =========================================================
+    // PAT CAMERA TRACKING
+    // =========================================================
 
     private void TrackUsingCameraRay(Vector2 predicted)
     {
-        // ── Axis diagnostic (fires once on first lock) ────────────────────
         if (!axisDiagLogged)
         {
             axisDiagLogged = true;
-            Vector3 centreRay = (cameraTransform.rotation * Vector3.forward).normalized;
+
+            Vector3 centreRay =
+                cameraTransform.forward.normalized;
+
             Debug.Log(
                 "[PAT AXIS DIAG] " +
-                $"YawAxis={coarseGimbalY.up} | PitchAxis={coarseGimbalX.right} | " +
-                $"CamFwd={cameraTransform.forward} | CentreRay={centreRay} | " +
-                $"Aligned={Vector3.Dot(cameraTransform.forward.normalized, centreRay) > 0.999f} | " +
-                $"FOV={cam.fieldOfView:F1}° Aspect={cam.aspect:F3} | " +
-                $"invertYaw={invertYaw} invertPitch={invertPitch}"
+                $"YawAxis={coarseGimbalY.up} | " +
+                $"PitchAxis={coarseGimbalX.right} | " +
+                $"CamFwd={cameraTransform.forward} | " +
+                $"FOV={cam.fieldOfView:F1} | " +
+                $"Aspect={cam.aspect:F3} | " +
+                $"invertYaw={invertYaw} | " +
+                $"invertPitch={invertPitch}"
             );
         }
 
-        // ── 1. Build target ray analytically from camera rotation + FOV ──
-        // We do NOT use cam.ViewportPointToRay() — it reads the stale
-        // cameraToWorldMatrix (frozen by Unity when the camera is rendered
-        // manually, as YoloDetection does). Instead we use the live
-        // cameraTransform.rotation quaternion which always reflects the
-        // actual gimbal state.
-        float halfFovY = cam.fieldOfView * 0.5f * Mathf.Deg2Rad;
-        float halfFovX = Mathf.Atan(cam.aspect * Mathf.Tan(halfFovY));
 
-        float px = predicted.x * 2f - 1f;  // [-1, 1]
-        float py = predicted.y * 2f - 1f;
+        // -----------------------------------------------------
+        // CAMERA FOV
+        // -----------------------------------------------------
 
-        Vector3 localRay = new Vector3(
-            px * Mathf.Tan(halfFovX),
-            py * Mathf.Tan(halfFovY),
-            1f
-        );
-        Vector3 targetDirection = (cameraTransform.rotation * localRay).normalized;
-        Vector3 cameraForward   = cameraTransform.forward.normalized;
+        float halfFovY =
+            cam.fieldOfView *
+            0.5f *
+            Mathf.Deg2Rad;
 
-        // ── 2. Yaw error (around coarseGimbalY.up) ───────────────────────
-        Vector3 yawAxis             = coarseGimbalY.up.normalized;
-        Vector3 currentYawDirection = Vector3.ProjectOnPlane(cameraForward,   yawAxis).normalized;
-        Vector3 targetYawDirection  = Vector3.ProjectOnPlane(targetDirection, yawAxis).normalized;
+
+        float halfFovX =
+            Mathf.Atan(
+                cam.aspect *
+                Mathf.Tan(halfFovY)
+            );
+
+
+        // -----------------------------------------------------
+        // CONVERT VIEWPORT POSITION
+        // TO CAMERA LOCAL DIRECTION
+        // -----------------------------------------------------
+
+        float px =
+            predicted.x * 2f - 1f;
+
+        float py =
+            predicted.y * 2f - 1f;
+
+
+        Vector3 localRay =
+            new Vector3(
+                px * Mathf.Tan(halfFovX),
+                py * Mathf.Tan(halfFovY),
+                1f
+            );
+
+
+        Vector3 targetDirection =
+            (
+                cameraTransform.rotation *
+                localRay
+            ).normalized;
+
+
+        Vector3 cameraForward =
+            cameraTransform.forward.normalized;
+
+
+        // -----------------------------------------------------
+        // YAW
+        // -----------------------------------------------------
+
+        Vector3 yawAxis =
+            coarseGimbalY.up.normalized;
+
+
+        Vector3 currentYawDirection =
+            Vector3.ProjectOnPlane(
+                cameraForward,
+                yawAxis
+            ).normalized;
+
+
+        Vector3 targetYawDirection =
+            Vector3.ProjectOnPlane(
+                targetDirection,
+                yawAxis
+            ).normalized;
+
 
         float yawError = 0f;
-        if (currentYawDirection.sqrMagnitude > 1e-6f && targetYawDirection.sqrMagnitude > 1e-6f)
-            yawError = Vector3.SignedAngle(currentYawDirection, targetYawDirection, yawAxis);
 
-        if (invertYaw) yawError = -yawError;
 
-        // ── 3. Apply yaw ─────────────────────────────────────────────────
-        float curYaw = NormalizeAngle(coarseGimbalY.localEulerAngles.y);
-        float newYaw = Mathf.Clamp(
-            Mathf.MoveTowardsAngle(curYaw, Mathf.Clamp(curYaw + yawError, -horizontalLimit, horizontalLimit), rotationSpeed * Time.deltaTime),
-            -horizontalLimit, horizontalLimit
-        );
-        coarseGimbalY.localRotation = Quaternion.Euler(0f, newYaw, 0f);
+        if (currentYawDirection.sqrMagnitude > 1e-6f &&
+            targetYawDirection.sqrMagnitude > 1e-6f)
+        {
+            yawError =
+                Vector3.SignedAngle(
+                    currentYawDirection,
+                    targetYawDirection,
+                    yawAxis
+                );
+        }
 
-        // ── 4. Pitch error (around coarseGimbalX.right, after yaw) ───────
-        Vector3 pitchAxis              = coarseGimbalX.right.normalized;
-        cameraForward                  = cameraTransform.forward.normalized;  // re-read after yaw
-        Vector3 currentPitchDirection  = Vector3.ProjectOnPlane(cameraForward,   pitchAxis).normalized;
-        Vector3 targetPitchDirection   = Vector3.ProjectOnPlane(targetDirection, pitchAxis).normalized;
+
+        if (invertYaw)
+        {
+            yawError = -yawError;
+        }
+
+
+        float currentYaw =
+            NormalizeAngle(
+                coarseGimbalY.localEulerAngles.y
+            );
+
+
+        float desiredYaw =
+            Mathf.Clamp(
+                currentYaw + yawError,
+                -horizontalLimit,
+                horizontalLimit
+            );
+
+
+        float newYaw =
+            Mathf.MoveTowardsAngle(
+                currentYaw,
+                desiredYaw,
+                rotationSpeed *
+                Time.deltaTime
+            );
+
+
+        newYaw =
+            Mathf.Clamp(
+                newYaw,
+                -horizontalLimit,
+                horizontalLimit
+            );
+
+
+        coarseGimbalY.localRotation =
+            Quaternion.Euler(
+                0f,
+                newYaw,
+                0f
+            );
+
+
+        // -----------------------------------------------------
+        // PITCH
+        // -----------------------------------------------------
+
+        cameraForward =
+            cameraTransform.forward.normalized;
+
+
+        Vector3 pitchAxis =
+            coarseGimbalX.right.normalized;
+
+
+        Vector3 currentPitchDirection =
+            Vector3.ProjectOnPlane(
+                cameraForward,
+                pitchAxis
+            ).normalized;
+
+
+        Vector3 targetPitchDirection =
+            Vector3.ProjectOnPlane(
+                targetDirection,
+                pitchAxis
+            ).normalized;
+
 
         float pitchError = 0f;
-        if (currentPitchDirection.sqrMagnitude > 1e-6f && targetPitchDirection.sqrMagnitude > 1e-6f)
-            pitchError = Vector3.SignedAngle(currentPitchDirection, targetPitchDirection, pitchAxis);
 
-        if (invertPitch) pitchError = -pitchError;
 
-        // ── 5. Apply pitch ────────────────────────────────────────────────
-        float curPitch = NormalizeAngle(coarseGimbalX.localEulerAngles.x);
-        float newPitch = Mathf.Clamp(
-            Mathf.MoveTowardsAngle(curPitch, Mathf.Clamp(curPitch + pitchError, -verticalLimit, verticalLimit), rotationSpeed * Time.deltaTime),
-            -verticalLimit, verticalLimit
-        );
-        coarseGimbalX.localRotation = Quaternion.Euler(newPitch, 0f, 0f);
+        if (currentPitchDirection.sqrMagnitude > 1e-6f &&
+            targetPitchDirection.sqrMagnitude > 1e-6f)
+        {
+            pitchError =
+                Vector3.SignedAngle(
+                    currentPitchDirection,
+                    targetPitchDirection,
+                    pitchAxis
+                );
+        }
 
-        // ── 6. Debug ──────────────────────────────────────────────────────
+
+        if (invertPitch)
+        {
+            pitchError = -pitchError;
+        }
+
+
+        float currentPitch =
+            NormalizeAngle(
+                coarseGimbalX.localEulerAngles.x
+            );
+
+
+        float desiredPitch =
+            Mathf.Clamp(
+                currentPitch + pitchError,
+                -verticalLimit,
+                verticalLimit
+            );
+
+
+        float newPitch =
+            Mathf.MoveTowardsAngle(
+                currentPitch,
+                desiredPitch,
+                rotationSpeed *
+                Time.deltaTime
+            );
+
+
+        newPitch =
+            Mathf.Clamp(
+                newPitch,
+                -verticalLimit,
+                verticalLimit
+            );
+
+
+        coarseGimbalX.localRotation =
+            Quaternion.Euler(
+                newPitch,
+                0f,
+                0f
+            );
+
+
         if (debugLogs)
         {
             Debug.Log(
-                $"[PAT] Owner={GimbalOwner.Current} | Detection={tracker.detection} | " +
-                $"Predicted={predicted} | CamFwd={cameraForward} | TargetRay={targetDirection} | " +
-                $"Yaw=[cur:{curYaw:F2} new:{newYaw:F2} err:{yawError:F2}] | " +
-                $"Pitch=[cur:{curPitch:F2} new:{newPitch:F2} err:{pitchError:F2}]"
+                $"[PAT] " +
+                $"Owner={GimbalOwner.Current} | " +
+                $"Detection={tracker.detection} | " +
+                $"Predicted={predicted} | " +
+                $"ErrorPx={CurrentAlignmentErrorPixels:F1} | " +
+                $"Locked={IsTargetLocked} | " +
+                $"Yaw={newYaw:F2} | " +
+                $"Pitch={newPitch:F2}"
             );
         }
-
-        Debug.DrawRay(cameraTransform.position, cameraForward   * 100f, Color.green);
-        Debug.DrawRay(cameraTransform.position, targetDirection  * 100f, Color.red);
     }
 
-    // ============================================================
-    // SEARCH MODE — full-sphere boustrophedon raster sweep
-    //
-    // Sweeps ±searchYawRange (default ±180°) × ±searchPitchRange
-    // (default ±90°) so the satellite can be found at any angle.
-    //
-    // Ordering is critical for correct pitch-step behaviour:
-    //   1. Sync YAW ONLY from the transform (authoritative after PAT
-    //      releases). Pitch is kept as independent state — syncing it
-    //      from the transform would silently discard the row-step
-    //      increment every frame.
-    //   2. Move yaw → write yaw to transform.
-    //   3. Check row end → increment pitch, flip yaw direction.
-    //   4. Clamp + write pitch AFTER the step so the new row value
-    //      is committed to the transform for this frame.
-    // ============================================================
+
+    // =========================================================
+    // SEARCH
+    // =========================================================
 
     private void RunSearch()
     {
-        GimbalOwner.Current = GimbalController.Search;
+        GimbalOwner.Current =
+            GimbalController.Search;
+
 
         if (!wasSearching)
         {
-            searchStartTime = Time.time;
-            wasSearching    = true;
-            sweepPassCount  = 0;
+            searchStartTime =
+                Time.time;
+
+            wasSearching = true;
+
+            sweepPassCount = 0;
+
+
             if (debugLogs)
-                Debug.Log("[Search] No track — starting full-sphere acquisition sweep. GimbalOwner=Search");
-        }
-
-        // Sync yaw from the transform every frame — it is authoritative
-        // because PAT may have left the gimbal at any yaw angle before
-        // releasing ownership. Pitch is NOT synced; it is maintained as
-        // independent state so row-step increments persist across frames.
-        searchYaw = NormalizeAngle(coarseGimbalY.localEulerAngles.y);
-
-        // ── Move yaw toward the end of the current row ────────────────────
-        float rowTargetYaw = searchYawDir > 0 ? searchYawRange : -searchYawRange;
-
-        searchYaw = Mathf.MoveTowards(searchYaw, rowTargetYaw, scanSpeed * Time.deltaTime);
-        searchYaw = Mathf.Clamp(searchYaw, -searchYawRange, searchYawRange);
-        coarseGimbalY.localRotation = Quaternion.Euler(0f, searchYaw, 0f);
-
-        // ── Row end: step pitch, reverse yaw direction ────────────────────
-        if (Mathf.Abs(searchYaw - rowTargetYaw) <= waypointTolerance)
-        {
-            searchPitch  += pitchStepDegrees;
-            searchYawDir *= -1;
-
-            if (searchPitch > searchPitchRange)
             {
-                // Completed one full raster pass — restart from the bottom.
-                searchPitch = -searchPitchRange;
-                sweepPassCount++;
-                if (debugLogs)
-                    Debug.LogWarning($"[Search] Full sphere sweep #{sweepPassCount} complete with no detection — restarting.");
+                Debug.Log(
+                    "[Search] No target. " +
+                    "Starting acquisition sweep."
+                );
             }
         }
 
-        // ── Write pitch AFTER the step so the committed value is in the
-        //    transform when the next Update reads it ────────────────────────
-        searchPitch = Mathf.Clamp(searchPitch, -searchPitchRange, searchPitchRange);
-        coarseGimbalX.localRotation = Quaternion.Euler(searchPitch, 0f, 0f);
+
+        searchYaw =
+            NormalizeAngle(
+                coarseGimbalY.localEulerAngles.y
+            );
+
+
+        float rowTargetYaw =
+            searchYawDir > 0
+                ? searchYawRange
+                : -searchYawRange;
+
+
+        searchYaw =
+            Mathf.MoveTowards(
+                searchYaw,
+                rowTargetYaw,
+                scanSpeed *
+                Time.deltaTime
+            );
+
+
+        searchYaw =
+            Mathf.Clamp(
+                searchYaw,
+                -searchYawRange,
+                searchYawRange
+            );
+
+
+        coarseGimbalY.localRotation =
+            Quaternion.Euler(
+                0f,
+                searchYaw,
+                0f
+            );
+
+
+        // -----------------------------------------------------
+        // REACHED YAW EDGE
+        // -----------------------------------------------------
+
+        if (Mathf.Abs(
+                searchYaw -
+                rowTargetYaw
+            ) <= waypointTolerance)
+        {
+            searchPitch +=
+                pitchStepDegrees;
+
+            searchYawDir *= -1;
+
+
+            if (searchPitch >
+                searchPitchRange)
+            {
+                searchPitch =
+                    -searchPitchRange;
+
+                sweepPassCount++;
+
+
+                if (debugLogs)
+                {
+                    Debug.LogWarning(
+                        $"[Search] Full sweep #" +
+                        $"{sweepPassCount} completed " +
+                        "without detection."
+                    );
+                }
+            }
+        }
+
+
+        searchPitch =
+            Mathf.Clamp(
+                searchPitch,
+                -searchPitchRange,
+                searchPitchRange
+            );
+
+
+        coarseGimbalX.localRotation =
+            Quaternion.Euler(
+                searchPitch,
+                0f,
+                0f
+            );
+
 
         if (debugLogs)
         {
             Debug.Log(
-                $"SEARCH | Yaw={searchYaw:F1} (→{rowTargetYaw:F1}) " +
-                $"Pitch={searchPitch:F1} Dir={searchYawDir}"
+                $"[SEARCH] " +
+                $"Yaw={searchYaw:F1} -> " +
+                $"{rowTargetYaw:F1} | " +
+                $"Pitch={searchPitch:F1} | " +
+                $"Direction={searchYawDir}"
             );
         }
     }
 
-    // ============================================================
-    // LASER BEAM
-    // ============================================================
 
+    // =========================================================
+    // LASER
+    // =========================================================
+
+    /// <summary>
+    /// Keeps the laser aligned with the tracking camera.
+    ///
+    /// This function intentionally does NOT point the laser directly
+    /// at targetSatellite. The laser represents the optical terminal's
+    /// current pointing direction.
+    /// </summary>
     private void UpdateLaserBeam()
     {
-        if (laserBeamController == null || laserOrigin == null || cameraTransform == null)
+        if (laserBeamController == null)
             return;
 
-        float beamLength = predictionDistance;
+        if (laserOrigin == null)
+            return;
 
-        if (useTargetDistanceForBeamLength && targetSatellite != null)
+        if (cameraTransform == null)
+            return;
+
+
+        float beamLength =
+            predictionDistance;
+
+
+        // Optional beam length based on satellite distance.
+        // This DOES NOT affect the pointing direction.
+        if (useTargetDistanceForBeamLength &&
+            targetSatellite != null)
         {
-            float projected = Vector3.Dot(
-                targetSatellite.position - laserOrigin.position,
-                cameraTransform.forward
-            );
-            beamLength = Mathf.Max(0.01f, projected);
+            float projectedDistance =
+                Vector3.Dot(
+                    targetSatellite.position -
+                    laserOrigin.position,
+                    cameraTransform.forward
+                );
+
+
+            beamLength =
+                Mathf.Max(
+                    0.01f,
+                    projectedDistance
+                );
         }
 
+
+        Vector3 direction =
+            cameraTransform.forward.normalized;
+
+
+        Vector3 laserEnd =
+            laserOrigin.position +
+            direction *
+            beamLength;
+
+
         laserBeamController.SetTargetPosition(
-            laserOrigin.position + cameraTransform.forward * beamLength
+            laserEnd
         );
     }
 
-    // ============================================================
-    // UTILITIES
-    // ============================================================
+
+    // =========================================================
+    // UTILITY
+    // =========================================================
 
     private float NormalizeAngle(float angle)
     {
         angle %= 360f;
-        if (angle > 180f) angle -= 360f;
+
+
+        if (angle > 180f)
+        {
+            angle -= 360f;
+        }
+
+
         return angle;
     }
 }

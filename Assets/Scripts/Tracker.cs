@@ -4,7 +4,6 @@ public class Tracker : MonoBehaviour
 {
     [Header("Detection")]
     public Vector2 detection;
-
     public bool targetDetected;
 
     [Header("Prediction")]
@@ -19,7 +18,19 @@ public class Tracker : MonoBehaviour
 
     private void Awake()
     {
+        Initialize();
+    }
+
+    private void Initialize()
+    {
         kalman = new KalmanFilter();
+
+        detection = Vector2.zero;
+        trackedPosition = Vector2.zero;
+        predictedPosition = Vector2.zero;
+        trackedVelocity = Vector2.zero;
+
+        targetDetected = false;
     }
 
     private void Update()
@@ -27,7 +38,20 @@ public class Tracker : MonoBehaviour
         if (!targetDetected)
             return;
 
+        if (kalman == null)
+        {
+            Debug.LogWarning(
+                "[Tracker] KalmanFilter was unexpectedly null. Reinitializing."
+            );
+
+            Initialize();
+            return;
+        }
+
         float deltaTime = Time.deltaTime;
+
+        if (deltaTime <= 0f)
+            return;
 
         trackedPosition =
             kalman.Update(
@@ -46,7 +70,11 @@ public class Tracker : MonoBehaviour
 
     public void SetDetection(Vector2 position)
     {
-        detection = position;
+        detection = new Vector2(
+            Mathf.Clamp01(position.x),
+            Mathf.Clamp01(position.y)
+        );
+
         targetDetected = true;
     }
 
@@ -57,6 +85,9 @@ public class Tracker : MonoBehaviour
 
     public Vector2 GetPredictedPosition()
     {
+        if (kalman == null)
+            return detection;
+
         return predictedPosition;
     }
 }
